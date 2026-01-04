@@ -1,0 +1,7 @@
+streamlit
+neo4j
+pandas
+yfinance
+plotly
+langchain-google-genai
+streamlit-agraph
