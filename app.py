@@ -28,10 +28,9 @@ st.markdown("""
 @st.cache_resource
 def get_driver():
     try:
-        # REPLACE WITH YOUR ACTUAL CREDENTIALS IF SECRETS NOT SET
-        URI = st.secrets.get("NEO4J_URI", "neo4j+s://50eee7c7.databases.neo4j.io")
-        USER = st.secrets.get("NEO4J_USER", "neo4j")
-        PASSWORD = st.secrets.get("NEO4J_PASSWORD", "EnYKtrepGyGyHBaAe84CrMyfuSUdxf6JHWoMbzexJ1s")
+        URI = st.secrets["NEO4J_URI"]
+        USER = st.secrets["NEO4J_USER"]
+        PASSWORD = st.secrets["NEO4J_PASSWORD"]
         return GraphDatabase.driver(URI, auth=(USER, PASSWORD))
     except Exception as e:
         st.error(f"Connection Error: {e}")
@@ -196,3 +195,4 @@ with tab_graph:
     
     agraph(nodes=nodes, edges=edges, config=config)
     
+
