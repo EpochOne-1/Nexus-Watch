@@ -16,22 +16,9 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #0E1117; color: #FAFAFA; }
-    .metric-card {
-        background-color: #262730;
-        border-left: 5px solid #FF4B4B;
-        padding: 15px;
-        border-radius: 5px;
-    }
     div[data-testid="stMetricValue"] { font-size: 24px; color: #FF4B4B; }
     h1, h2, h3 { color: #FAFAFA !important; }
-    /* Custom Legend Styling in Sidebar */
-    .legend-row {
-        display: flex; 
-        justify-content: space-between; 
-        padding: 5px 0; 
-        border-bottom: 1px solid #444;
-        font-size: 13px;
-    }
+    .legend-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #444; font-size: 13px; }
     .legend-ticker { font-weight: bold; color: #FF4B4B; }
     .legend-name { color: #ddd; text-align: right; }
 </style>
@@ -40,278 +27,172 @@ st.markdown("""
 # --- DATABASE CONNECTION ---
 @st.cache_resource
 def get_driver():
-    # REPLACE THESE WITH YOUR SECRETS OR LOCAL CREDENTIALS
-    # For local testing, you can swap st.secrets with raw strings if needed
     try:
-        URI = st.secrets["NEO4J_URI"]
-        USER = st.secrets["NEO4J_USER"]
-        PASSWORD = st.secrets["NEO4J_PASSWORD"]
+        # REPLACE WITH YOUR ACTUAL CREDENTIALS IF SECRETS NOT SET
+        URI = st.secrets.get("NEO4J_URI", "neo4j+s://50eee7c7.databases.neo4j.io")
+        USER = st.secrets.get("NEO4J_USER", "neo4j")
+        PASSWORD = st.secrets.get("NEO4J_PASSWORD", "EnYKtrepGyGyHBaAe84CrMyfuSUdxf6JHWoMbzexJ1s")
         return GraphDatabase.driver(URI, auth=(USER, PASSWORD))
-    except:
-        st.error("Secrets not found. If running locally, ensure .streamlit/secrets.toml exists.")
+    except Exception as e:
+        st.error(f"Connection Error: {e}")
         return None
 
 def get_risk_data(driver):
-    # Use the RiskEngine class we built to get the raw dataframe
     engine = RiskEngine(driver)
     return engine.get_risk_dashboard_data()
 
 # --- MAIN APP ---
-try:
-    driver = get_driver()
-    if not driver:
-        st.stop()
+driver = get_driver()
+if not driver:
+    st.stop()
 
-    df = get_risk_data(driver)
+df = get_risk_data(driver)
 
-    # SIDEBAR
-    st.sidebar.title("🛑 Nexus-Watch")
-    st.sidebar.markdown("### **Systemic Risk Monitor**")
+# SIDEBAR
+st.sidebar.title("🛑 Nexus-Watch")
+st.sidebar.markdown("### **Systemic Risk Monitor**")
+
+# 1. Filters
+min_score = st.sidebar.slider("Minimum Risk Score", 0, 50, 5)
+
+if not df.empty:
+    filtered_df = df[df['Score'] >= min_score]
+else:
+    filtered_df = pd.DataFrame()
+    st.warning("No data found in database.")
+    st.stop()
+
+# 2. LEGEND
+with st.sidebar.expander("Show Full Company Names", expanded=False):
+    legend_df = filtered_df[['Ticker', 'Name', 'Score']].sort_values(by='Score', ascending=False)
+    for index, row in legend_df.iterrows():
+        st.markdown(f"""<div class="legend-row"><span class="legend-ticker">{row['Ticker']}</span><span class="legend-name">{row['Name'][:25]}...</span></div>""", unsafe_allow_html=True)
+
+# DASHBOARD HEADER
+st.title("Nexus-Watch: Live Intelligence")
+st.markdown(f"**Status:** Scanning {len(filtered_df)} high-risk entities.")
+
+# METRICS ROW
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("🚨 Total At Risk", len(filtered_df))
+with col2:
+    # Calculate Climate Risk Leaders
+    climate_risky = len(filtered_df[filtered_df['Climate_Risk'] > 0])
+    st.metric("🌍 Climate Exposed", climate_risky)
+with col3:
+    total_val = filtered_df['Contract_Value'].sum()
+    st.metric("🏛️ Govt Exposure", f"${total_val/1000000:,.1f}M")
+with col4:
+    news_cnt = len(filtered_df[filtered_df['Direct_Risk'] > 0])
+    st.metric("📰 Active News Alerts", news_cnt)
+
+st.markdown("---")
+
+# --- TABS ---
+tab_climate, tab_gov, tab_supply, tab_graph = st.tabs(["🌍 Climate & Sector Risk", "🤝 Governance", "🏛️ Supply Chain", "🕸️ Network Graph"])
+
+# === TAB 1: CLIMATE (NEW!) ===
+with tab_climate:
+    st.subheader("Transition Risk & Sector Exposure")
+    st.caption("Auto-extracted from 2025 Annual Reports. Identifies 'Dirty Sector' links and Physical Risk disclosures.")
     
-    # 1. Filters
-    st.sidebar.markdown("---")
-    min_score = st.sidebar.slider("Minimum Risk Score", 0, 50, 5)
+    climate_df = filtered_df[filtered_df['Climate_Risk'] > 0].copy()
     
-    if not df.empty:
-        filtered_df = df[df['Score'] >= min_score]
+    if not climate_df.empty:
+        # Format columns for display
+        climate_df['Primary Risks'] = climate_df['Disclosed_Risks'].apply(lambda x: ", ".join(x[:3]) if x else "None")
+        climate_df['Dirty Sectors'] = climate_df['Exposed_Sectors'].apply(lambda x: ", ".join(x[:3]) if x else "None")
+        
+        st.dataframe(
+            climate_df[['Ticker', 'Name', 'Climate_Risk', 'Dirty Sectors', 'Primary Risks']],
+            use_container_width=True,
+            column_config={
+                "Climate_Risk": st.column_config.ProgressColumn("Risk Score", format="%d", min_value=0, max_value=100),
+                "Dirty Sectors": st.column_config.TextColumn("⚠️ Sector Exposure"),
+                "Primary Risks": st.column_config.TextColumn("📝 Disclosed Risks")
+            },
+            hide_index=True
+        )
     else:
-        filtered_df = pd.DataFrame()
+        st.success("No significant Climate Risks detected.")
 
-    # 2. COMPANY LEGEND (New Feature!)
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📖 Company Reference")
-    st.sidebar.info("Full names of companies currently visible in the dashboard.")
+# === TAB 2: GOVERNANCE ===
+with tab_gov:
+    st.subheader("Boardroom Contagion")
+    gov_df = filtered_df[filtered_df['Contagion_Risk'] > 0].copy()
+    if not gov_df.empty:
+        st.dataframe(
+            gov_df[['Ticker', 'Name', 'Contagion_Risk', 'Contagion_Context']],
+            use_container_width=True,
+            column_config={
+                "Contagion_Risk": st.column_config.NumberColumn("Score"),
+                "Contagion_Context": st.column_config.ListColumn("Director Links")
+            },
+            hide_index=True
+        )
+    else:
+        st.info("No Boardroom Contagion detected.")
+
+# === TAB 3: SUPPLY CHAIN ===
+with tab_supply:
+    st.subheader("Government Revenue Vulnerability")
+    supply_df = filtered_df[filtered_df['Supply_Risk'] > 0].copy()
+    if not supply_df.empty:
+        supply_df['Status'] = supply_df['Supply_Risk'].apply(lambda x: "🔴 CRITICAL" if x >= 15 else "🟠 SYSTEMIC" if x >= 10 else "🟡 MODERATE")
+        
+        st.dataframe(
+            supply_df[['Ticker', 'Status', 'Contract_Value', 'Govt_Clients']],
+            use_container_width=True,
+            column_config={
+                "Contract_Value": st.column_config.NumberColumn("Revenue", format="$%d"),
+                "Govt_Clients": st.column_config.ListColumn("Agencies")
+            },
+            hide_index=True
+        )
+
+# === TAB 4: GRAPH ===
+with tab_graph:
+    st.subheader("🕸️ Network Contagion Map")
     
-    if not filtered_df.empty:
-        # Use an Expander so it doesn't clutter the view unless asked
-        with st.sidebar.expander("Show Full Company Names", expanded=True):
-            # Sort by Score so the most risky ones are at the top
-            legend_df = filtered_df[['Ticker', 'Name', 'Score']].sort_values(by='Score', ascending=False)
-            
-            for index, row in legend_df.iterrows():
-                st.markdown(
-                    f"""
-                    <div class="legend-row">
-                        <span class="legend-ticker">{row['Ticker']}</span>
-                        <span class="legend-name">{row['Name'][:25]}...</span> 
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-                # Note: truncated name to 25 chars to fit sidebar
+    # Legend HTML
+    st.markdown("""
+    <div style="display: flex; gap: 15px; justify-content: center; margin-bottom: 10px;">
+        <span style="color:#FF4B4B">● Company</span>
+        <span style="color:#2ecc71">● Sector (Coal/Mining)</span>
+        <span style="color:#0084ff">■ Govt Contract</span>
+    </div>""", unsafe_allow_html=True)
 
-    # DASHBOARD HEADER
-    st.title("Nexus-Watch: Live Intelligence")
-    st.markdown(f"**Status:** Scanning {len(filtered_df)} high-risk entities.")
+    nodes = []
+    edges = []
+    added_ids = set()
 
-    # METRICS ROW
-    if not filtered_df.empty:
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("🚨 Total At Risk", len(filtered_df))
-        with col2:
-            # Human readable millions
-            total_val = filtered_df['Contract_Value'].sum()
-            st.metric("🏛️ Govt Exposure", f"${total_val:,.0f}")
-        with col3:
-            critical_cnt = len(filtered_df[filtered_df['Supply_Risk'] >= 15])
-            st.metric("⚠️ Single Points of Failure", critical_cnt)
-        with col4:
-            news_cnt = len(filtered_df[filtered_df['Direct_Risk'] > 0])
-            st.metric("📰 Active News Alerts", news_cnt)
+    for _, row in filtered_df.head(40).iterrows():
+        # Company Node
+        if row['Ticker'] not in added_ids:
+            nodes.append(Node(id=row['Ticker'], label=row['Ticker'], size=25, color="#FF4B4B", title=row['Name']))
+            added_ids.add(row['Ticker'])
 
-    st.markdown("---")
+        # 1. Supply Chain Nodes
+        if row['Contract_Value'] > 0:
+            if "GOVT" not in added_ids:
+                nodes.append(Node(id="GOVT", label="GOVT", size=30, color="#0084ff", symbolType="square"))
+                added_ids.add("GOVT")
+            edges.append(Edge(source=row['Ticker'], target="GOVT", label=f"${row['Contract_Value']/1000000:.0f}M"))
 
-    # --- TABS FOR LAYOUT ---
-    tab_gov, tab_supply, tab_graph = st.tabs(["🤝 Governance Risks", "🏛️ Supply Chain Risks", "🕸️ Interactive Graph"])
+        # 2. Climate Sector Nodes
+        if row['Exposed_Sectors']:
+            for sector in row['Exposed_Sectors']:
+                # Clean up sector name
+                s_id = f"SECTOR_{sector}"
+                if s_id not in added_ids:
+                    # Color Dirty Sectors (Coal, Mining) differently if you want, or just generic green
+                    nodes.append(Node(id=s_id, label=sector, size=20, color="#2ecc71", symbolType="diamond"))
+                    added_ids.add(s_id)
+                edges.append(Edge(source=row['Ticker'], target=s_id, color="#2ecc71"))
 
-# === TAB 1: GOVERNANCE & REPUTATION ===
-    with tab_gov:
-        # --- SECTION 1: HIDDEN CONTAGION ---
-        st.subheader("Boardroom Contagion (The 'Old Boys Club')")
-        st.caption("⚠️ Companies flagged because their Directors sit on the boards of other 'Infected' firms.")
-        
-        # Filter for Governance risks
-        gov_df = filtered_df[filtered_df['Contagion_Risk'] > 0].copy()
-        
-        if not gov_df.empty:
-            st.dataframe(
-                gov_df[['Ticker', 'Name', 'Score', 'Contagion_Context']],
-                use_container_width=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn(
-                        "Risk Score", format="%d", min_value=0, max_value=50
-                    ),
-                    "Contagion_Context": st.column_config.ListColumn(
-                        "Shared Director Links (Source of Risk)"
-                    )
-                },
-                hide_index=True
-            )
-        else:
-            st.info("✅ No Boardroom Contagion detected in the current filter.")
-
-        st.markdown("---") # Visual Divider
-
-        # --- SECTION 2: DIRECT NEWS THREATS ---
-        st.subheader("🚨 Active Reputational Threats (Direct News)")
-        st.caption("🔥 Companies currently mentioned in negative news stories (Fraud, Lawsuits, Investigations).")
-
-        # Filter for Direct News risks
-        news_df = filtered_df[filtered_df['Direct_Risk'] > 0].copy()
-
-        if not news_df.empty:
-            # Clean up the list to show the top headline
-            news_df['Latest Headline'] = news_df['News_Context'].apply(lambda x: x[0] if isinstance(x, list) and len(x) > 0 else "Unknown")
-            
-            st.dataframe(
-                news_df[['Ticker', 'Name', 'Score', 'Latest Headline']],
-                use_container_width=True,
-                column_config={
-                    "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-                    "Score": st.column_config.NumberColumn("Severity Score"),
-                    "Latest Headline": st.column_config.TextColumn(
-                        "Latest AI-Detected Headline",
-                        width="large"
-                    )
-                },
-                hide_index=True
-            )
-        else:
-            st.success("✅ No Active News Threats detected in the current filter.")
-
-    # === TAB 2: SUPPLY CHAIN (GOVERNMENT) ===
-    with tab_supply:
-        st.subheader("Government Revenue Vulnerability")
-        st.caption("Companies with high dependency on federal contracts. High Risk = Un-hedged revenue.")
-        
-        if not filtered_df.empty:
-            # Filter for Supply Chain risks
-            supply_df = filtered_df[filtered_df['Supply_Risk'] > 0].copy()
-            
-            # Create a "Status" column for readability
-            def get_status(row):
-                if row['Supply_Risk'] >= 15: return "🔴 CRITICAL (Single Client)"
-                if row['Supply_Risk'] >= 5: return "🟠 SYSTEMIC (High Value)"
-                return "🟡 MODERATE"
-
-            supply_df['Status'] = supply_df.apply(get_status, axis=1)
-
-            # Select columns
-            supply_display = supply_df[['Ticker', 'Name', 'Status', 'Contract_Value', 'Govt_Clients']]
-
-            st.dataframe(
-                supply_display,
-                use_container_width=True,
-                column_config={
-                    "Contract_Value": st.column_config.NumberColumn(
-                        "Total Locked Revenue",
-                        format="$%d",  # <--- THIS FIXES THE NUMBER FORMATTING
-                    ),
-                    "Govt_Clients": st.column_config.ListColumn(
-                        "Key Government Agencies"
-                    ),
-                    "Status": st.column_config.TextColumn(
-                        "Risk Classification"
-                    )
-                },
-                hide_index=True
-            )
-        else:
-            st.success("No Supply Chain Risks detected.")
-
-
-# === TAB 3: THE INTERACTIVE GRAPH ===
-# === TAB 3: THE INTERACTIVE GRAPH ===
-    with tab_graph:
-        st.subheader("🕸️ Network Contagion Map")
-        
-        # 1. Custom Legend
-        st.markdown("""
-        <div style="display: flex; gap: 15px; margin-bottom: 10px; justify-content: center; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center;">
-                <div style="width: 12px; height: 12px; background-color: #FF4B4B; border-radius: 50%; margin-right: 5px;"></div>
-                <span style="color: #ddd; font-size: 12px;">Target Company</span>
-            </div>
-            <div style="display: flex; align-items: center;">
-                <div style="width: 12px; height: 12px; background-color: #0084ff; margin-right: 5px;"></div>
-                <span style="color: #ddd; font-size: 12px;">Govt Revenue</span>
-            </div>
-            <div style="display: flex; align-items: center;">
-                <div style="width: 12px; height: 12px; background-color: #9b59b6; transform: rotate(45deg); margin-right: 5px;"></div>
-                <span style="color: #ddd; font-size: 12px;">Infected Source</span>
-            </div>
-             <div style="display: flex; align-items: center; border-left: 1px solid #555; padding-left: 10px;">
-                <span style="color: #888; font-size: 12px;"><i>*Scroll to Zoom. Drag to move.</i></span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if not filtered_df.empty:
-            nodes = []
-            edges = []
-            added_node_ids = set()
-
-            for index, row in filtered_df.head(50).iterrows():
-                # Node Generation (Same as before)
-                if row['Ticker'] not in added_node_ids:
-                    nodes.append(Node(id=row['Ticker'], label=row['Ticker'], title=f"Name: {row['Name']}\nRisk Score: {row['Score']}", size=25, color="#FF4B4B", font={'color': 'white'}))
-                    added_node_ids.add(row['Ticker'])
-
-                if row['Supply_Risk'] > 0:
-                    if "GOVT" not in added_node_ids:
-                        nodes.append(Node(id="GOVT", label="GOVT CONTRACTS", title="Federal Government Revenue", size=35, color="#0084ff", symbolType="square", font={'color': 'white'}))
-                        added_node_ids.add("GOVT")
-                    
-                    val_millions = row['Contract_Value'] / 1000000
-                    width = 4 if row['Contract_Value'] > 50000000 else 1.5
-                    edges.append(Edge(source=row['Ticker'], target="GOVT", label=f"${val_millions:.0f}M", color="#5e8bfa", strokeWidth=width))
-
-                if row['Contagion_Risk'] > 0:
-                    if "INFECTED" not in added_node_ids:
-                        nodes.append(Node(id="INFECTED", label="RISK VECTOR", size=20, color="#9b59b6", symbolType="diamond", font={'color': 'white'}))
-                        added_node_ids.add("INFECTED")
-                    edges.append(Edge(source=row['Ticker'], target="INFECTED", label="Director Link", color="#d2b4de"))
-
-            # --- CONFIGURATION FIX (CENTERED & ZOOMED OUT) ---
-            config = Config(
-                width="100%", 
-                height=600, 
-                directed=True, 
-                nodeHighlightBehavior=True, 
-                highlightColor="#F7A7A6",
-                collapsible=False,
-                
-                # 1. AUTO-FIT: This is the command to fit everything in the viewport
-                fit=True,
-                
-                # 2. PHYSICS TUNING FOR STABILITY
-                physicsOptions={
-                    "solver": "barnesHut",
-                    "barnesHut": {
-                        # Moderate repulsion: Pushes nodes apart so they don't overlap, but doesn't blast them off-screen
-                        "gravitationalConstant": -2000, 
-                        
-                        # HIGH CENTRAL GRAVITY (0.55): This is the fix. 
-                        # It acts like a strong magnet in the center of the screen, preventing the "Blank Screen" issue.
-                        "centralGravity": 0.55, 
-                        
-                        "springLength": 90, 
-                        "springConstant": 0.04,
-                        "damping": 0.09,
-                        "avoidOverlap": 0.5
-                    },
-                    # 3. STABILIZATION: Pre-simulates the layout so it loads "settled"
-                    "stabilization": {
-                        "enabled": True,
-                        "iterations": 1000,
-                        "fit": True
-                    }
-                }
-            )
-            
-            agraph(nodes=nodes, edges=edges, config=config)
-
-            
-except Exception as e:
-    st.error(f"Application Error: {e}")
+    config = Config(width="100%", height=600, directed=True, nodeHighlightBehavior=True, highlightColor="#F7A7A6",
+                    physicsOptions={"solver": "barnesHut", "barnesHut": {"gravitationalConstant": -2000, "centralGravity": 0.55, "springLength": 90}})
+    
+    agraph(nodes=nodes, edges=edges, config=config)
+    
